@@ -1,0 +1,51 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ps010_backend
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://foundry_user:foundry_pass@postgres:5432/foundry_quality
+      - SECRET_KEY=FOUNDRY-QUALITY-4.0-PS010-SUPER-SECURE-KEY-2026
+      - DEMO_MODE=true
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - backend_data:/app/data
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ps010_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ps010_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=foundry_user
+      - POSTGRES_PASSWORD=foundry_pass
+      - POSTGRES_DB=foundry_quality
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U foundry_user -d foundry_quality"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  backend_data:

@@ -1,6 +1,8 @@
+import json
 import math
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.core.security import hash_password
 from app.models.user import User
 from app.models.line import ProductionLine
@@ -12,19 +14,103 @@ from app.models.complaint import CustomerComplaint
 from app.models.investigation import RootCauseInvestigation
 from app.models.alert import QualityAlert
 from app.models.audit import AuditLog
+from app.services.audit_service import append_audit_event
+
+
+def seed_demo_supplemental_records(db: Session) -> None:
+    """
+    Populates SandBatch and RootCauseInvestigation tables if empty in demo mode,
+    without modifying or resetting existing records.
+    """
+    if not settings.is_demo_enabled():
+        return
+
+    now = datetime.now(timezone.utc)
+    if db.query(SandBatch).count() == 0:
+        op = db.query(User).filter(User.username == "operator").first()
+        op_id = op.id if op else None
+        batches = []
+        for l_idx, line_code in enumerate(["D1", "D2", "D3", "D4"]):
+            for b_idx in range(3):
+                ts = now - timedelta(hours=b_idx * 2 + l_idx)
+                batches.append(
+                    SandBatch(
+                        batch_number=f"BAT-{line_code}-{ts.strftime('%Y%m%d')}-{80 - b_idx:03d}",
+                        line_code=line_code,
+                        muller_id="Muller-A (Simpson 2G)" if b_idx % 2 == 0 else "Muller-B (Eirich R19)",
+                        batch_weight_kg=2000.0,
+                        bentonite_addition_kg=25.0 + b_idx * 0.5,
+                        coal_dust_addition_kg=12.0 + (0.2 if b_idx == 1 else 0.0),
+                        new_sand_addition_kg=100.0,
+                        return_sand_kg=1863.0,
+                        water_addition_liters=34.0 + (4.5 if line_code == "D2" and b_idx == 0 else b_idx * 0.3),
+                        cycle_time_seconds=120 + b_idx * 2,
+                        operator_id=op_id,
+                        timestamp=ts,
+                        notes="Initial demo muller batch feed",
+                    )
+                )
+        db.add_all(batches)
+        db.commit()
+
+    if db.query(RootCauseInvestigation).count() == 0:
+        qe = db.query(User).filter(User.username == "quality_engineer").first()
+        moisture = db.query(Parameter).filter(Parameter.code == "MOISTURE").first()
+        porosity = db.query(DefectCategory).filter(DefectCategory.code == "POROSITY").first()
+        whys = [
+            "Why 1: Why did porosity reject rate increase? -> Excessive steam bubbles trapped during mold filling.",
+            "Why 2: Why was excess steam generated? -> Green sand moisture content exceeded 4.0% (USL is 3.7%).",
+            "Why 3: Why was sand moisture over 4.0%? -> Automated water dosing valve at Muller #2 remained open 8 seconds too long.",
+            "Why 4: Why did the valve stay open? -> Optical moisture sensor lens was coated in bentonite dust, misreading return sand as dry.",
+            "Why 5 (Root Cause): Why was the lens coated? -> Scheduled bi-weekly air purge jet cleaning maintenance was skipped during shift transition.",
+        ]
+        fishbone = {
+            "man": "Skipped maintenance log; Operator did not manually cross-verify moisture on Moisture Teller balance.",
+            "machine": "Muller-2 automated water solenoid valve stuck; air purge nozzle pressure low (1.8 bar vs 4.0 bar).",
+            "material": "Incoming bentonite shipment had higher fines percentage; return sand temperature elevated to 42 C.",
+            "method": "Mulling cycle completed before full water absorption; fast-track cycle was enabled.",
+            "measurement": "Optical moisture probe calibrated 45 days ago; baseline drift of +0.35% detected.",
+            "environment": "High ambient air relative humidity (88%) in the sand preparation hall.",
+        }
+        inv = RootCauseInvestigation(
+            title="Line D2 Porosity Spike Investigation (Moisture Excursion)",
+            investigation_number="RCA-D2-2026-001",
+            line_code="D2",
+            parameter_id=moisture.id if moisture else None,
+            defect_category_id=porosity.id if porosity else None,
+            lag_hours=12,
+            correlation_stat=0.68,
+            p_value=0.002,
+            five_why_analysis=json.dumps(whys),
+            fishbone_factors=json.dumps(fishbone),
+            findings="Time-lagged correlation (12h) flagged strong association between moisture excursions >3.8% and porosity scrap.",
+            conclusion="Implemented daily automated sensor air-purge check at shift handover and PLC moisture interlock above 3.70%.",
+            status="VALIDATED",
+            version=1,
+            investigator_id=qe.id if qe else None,
+            created_at=now - timedelta(days=2),
+            updated_at=now - timedelta(days=1),
+        )
+        db.add(inv)
+        db.commit()
+
 
 def seed_foundry_data(db: Session, force: bool = False):
     """
-    Populates comprehensive realistic demo data for lines D1, D2, D3, D4.
-    Includes normal operations, process drift on D2 (moisture surge causing porosity),
-    low permeability on D3 (blowhole defects), SPC Nelson rule triggers,
-    rejections, customer complaints, and audit logs.
+    Populates realistic demo data for lines D1, D2, D3, D4 ONLY when demo mode is enabled.
+    Refuses execution in production environments.
     """
-    existing_user = db.query(User).first()
-    if existing_user and not force:
+    if settings.ENVIRONMENT == "production":
+        raise RuntimeError("Demo seeding is strictly forbidden in production environment.")
+    if not settings.is_demo_enabled() and not force:
         return
 
-    # Clear existing if force
+    existing_user = db.query(User).first()
+    if existing_user and not force:
+        seed_demo_supplemental_records(db)
+        return
+
+    # Clear existing if force (demo/test only)
     if force:
         db.query(AuditLog).delete()
         db.query(QualityAlert).delete()
@@ -525,29 +611,40 @@ def seed_foundry_data(db: Session, force: bool = False):
     db.add_all(alerts)
     db.commit()
 
-    # 10. Audit Log Initial Records
+    # 10. Audit Log Initial Records (hash-chained)
     print("Writing initial IATF audit trail entries...")
-    audit_entries = [
-        AuditLog(
-            user_id=admin_id, user_name="S. Natarajan", user_role="quality_manager",
-            action="CREATE", entity_type="System", entity_id="SYS-INIT",
-            new_value='{"version": "1.0.0", "lines": ["D1", "D2", "D3", "D4"], "compliance": "IATF 16949 / ISO 9001"}',
-            reason="Initial installation and deployment of PS-010 Quality 4.0 Platform"
-        ),
-        AuditLog(
-            user_id=admin_id, user_name="S. Natarajan", user_role="quality_manager",
-            action="CREATE", entity_type="ParameterSpecification", entity_id="REV-1",
-            new_value='{"revision": 1, "approved_parameters": 15, "lines": ["D1", "D2", "D3", "D4"]}',
-            reason="Approved baseline specifications for green sand physical & chemical testing"
-        ),
-        AuditLog(
-            user_id=qe_id, user_name="Dr. Priya Sundaram", user_role="quality_engineer",
-            action="ACKNOWLEDGE", entity_type="QualityAlert", entity_id="ALT-D3-PERM-RULE1",
-            new_value='{"status": "ACKNOWLEDGED"}',
-            reason="Investigated baghouse filter differential pressure and sand fines buildup"
-        )
-    ]
-    db.add_all(audit_entries)
-    db.commit()
+    admin_user = users[3]
+    qe_user = users[1]
+    append_audit_event(
+        db,
+        admin_user,
+        "CREATE",
+        "System",
+        "SYS-INIT",
+        new_value={"version": settings.VERSION, "lines": ["D1", "D2", "D3", "D4"], "compliance": "IATF 16949 / ISO 9001"},
+        reason="Initial installation and deployment of PS-010 Quality 4.0 Platform",
+        commit=True,
+    )
+    append_audit_event(
+        db,
+        admin_user,
+        "CREATE",
+        "ParameterSpecification",
+        "REV-1",
+        new_value={"revision": 1, "approved_parameters": 15, "lines": ["D1", "D2", "D3", "D4"]},
+        reason="Approved baseline specifications for green sand physical & chemical testing",
+        commit=True,
+    )
+    append_audit_event(
+        db,
+        qe_user,
+        "ACKNOWLEDGE",
+        "QualityAlert",
+        "ALT-D3-PERM-RULE1",
+        new_value={"status": "ACKNOWLEDGED"},
+        reason="Investigated baghouse filter differential pressure and sand fines buildup",
+        commit=True,
+    )
 
+    seed_demo_supplemental_records(db)
     print("Seeding completed successfully! PS-010 database populated with realistic Quality 4.0 foundry dataset.")

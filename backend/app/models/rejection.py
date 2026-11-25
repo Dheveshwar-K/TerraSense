@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, CheckConstraint, Index
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+
 
 class CastingProduct(Base):
     __tablename__ = "casting_products"
@@ -14,6 +15,7 @@ class CastingProduct(Base):
     weight_kg = Column(Float, default=18.5)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+
 class DefectCategory(Base):
     __tablename__ = "defect_categories"
 
@@ -22,6 +24,7 @@ class DefectCategory(Base):
     name = Column(String(100), nullable=False)
     description = Column(String(255), nullable=True)
     potential_sand_causes = Column(Text, nullable=True)
+
 
 class RejectionRecord(Base):
     __tablename__ = "rejection_records"
@@ -33,20 +36,30 @@ class RejectionRecord(Base):
     shift = Column(Integer, nullable=False, index=True)  # 1, 2, 3
     product_id = Column(Integer, ForeignKey("casting_products.id"), nullable=False, index=True)
     defect_category_id = Column(Integer, ForeignKey("defect_categories.id"), nullable=False, index=True)
-    
+
     rejected_qty = Column(Integer, nullable=False)
     inspected_qty = Column(Integer, nullable=False)
     rejection_rate = Column(Float, nullable=False)  # (rejected / inspected) * 100
-    
+
     batch_number = Column(String(50), nullable=True)
     detection_stage = Column(String(50), default="Visual Shakeout")  # Shakeout, Shotblast, Machining, Final QC
     severity = Column(String(20), default="MAJOR")  # MINOR, MAJOR, CRITICAL
     root_cause_candidate = Column(String(255), nullable=True)
     corrective_action = Column(Text, nullable=True)
     responsible_person = Column(String(100), nullable=True)
+    inspector_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     status = Column(String(20), default="RECORDED")  # RECORDED, INVESTIGATING, CLOSED
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     product = relationship("CastingProduct")
     defect_category = relationship("DefectCategory")
+    inspector = relationship("User")
+
+    __table_args__ = (
+        CheckConstraint("rejected_qty >= 0", name="ck_rejection_rejected_nonneg"),
+        CheckConstraint("inspected_qty > 0", name="ck_rejection_inspected_pos"),
+        CheckConstraint("rejected_qty <= inspected_qty", name="ck_rejection_rejected_le_inspected"),
+        CheckConstraint("shift IN (1, 2, 3)", name="ck_rejection_shift_valid"),
+        Index("ix_rejection_line_date_defect", "line_code", "production_date", "defect_category_id"),
+    )

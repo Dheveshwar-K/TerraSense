@@ -4,48 +4,68 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: ps010_backend
-    restart: always
+    restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql://foundry_user:foundry_pass@postgres:5432/foundry_quality
-      - SECRET_KEY=FOUNDRY-QUALITY-4.0-PS010-SUPER-SECURE-KEY-2026
-      - DEMO_MODE=true
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-foundry_quality}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_MINUTES: ${REFRESH_TOKEN_EXPIRE_MINUTES:-10080}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1}
+      DEMO_MODE: ${DEMO_MODE:-false}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     volumes:
       - backend_data:/app/data
+    networks:
+      - terrasense_net
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: ps010_frontend
-    restart: always
+    restart: unless-stopped
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    networks:
+      - terrasense_net
 
   postgres:
     image: postgres:16-alpine
     container_name: ps010_postgres
-    restart: always
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=foundry_user
-      - POSTGRES_PASSWORD=foundry_pass
-      - POSTGRES_DB=foundry_quality
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-foundry_quality}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U foundry_user -d foundry_quality"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-foundry_quality}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - terrasense_net
 
 volumes:
   postgres_data:
   backend_data:
+
+networks:
+  terrasense_net:
+    driver: bridge

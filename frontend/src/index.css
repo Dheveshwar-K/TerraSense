@@ -13,10 +13,11 @@
 
   body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background-color: #f8fafc;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f1f5f9;
     color: #0f172a;
     -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   #root {
@@ -24,6 +25,10 @@
     display: flex;
     flex-direction: column;
   }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Custom scrollbars for industrial density data tables */

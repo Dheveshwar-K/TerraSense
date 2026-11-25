@@ -1,66 +1,96 @@
-# Deployment & Operational Guide
+# Deployment, Migrations, Backup & Operations Guide
 
-## 1. Local Development Quickstart
+## 1. Environments & Configuration
 
-### Prerequisites
-- Python 3.12+ (or UV / Conda)
-- Node.js 20+ and npm 10+
-- Modern Web Browser (Chrome, Edge, Firefox)
+TerraSense supports four runtime modes via `ENVIRONMENT`:
+- `development`: Local engineering with SQLite or local PostgreSQL.
+- `demo`: Demonstration mode (`DEMO_MODE=true`) enabling demo persona switcher and sample seeding.
+- `testing`: Automated test execution.
+- `production`: Enforces strict security invariants at startup:
+  - `SECRET_KEY` must be at least 32 characters and not a known placeholder.
+  - `DEMO_MODE` must be `false`.
+  - `DATABASE_URL` must point to PostgreSQL (`postgresql://...`), never SQLite, and must not use known placeholder passwords.
+  - `ALLOWED_ORIGINS` must not include `*`.
 
-### Backend Setup
+Generate a production secret key:
 ```bash
-# Navigate to backend directory
-cd backend
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start backend development server (auto-seeds realistic database on first run)
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
-API OpenAPI Swagger documentation will be accessible at: `http://127.0.0.1:8000/docs`
 
-### Frontend Setup
-```bash
-# Navigate to frontend directory
+---
+
+## 2. Local Development Quickstart
+
+### Backend
+```powershell
+$env:PYTHONPATH = "d:\Projects\Sakthi Hack\backend"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+Health endpoints:
+- Liveness: `GET http://127.0.0.1:8000/api/health`
+- Database Readiness: `GET http://127.0.0.1:8000/api/ready`
+
+### Frontend
+```powershell
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start Vite development server
 npm run dev
 ```
-The Web Application will be live at: `http://localhost:5173`
+Vite runs on `http://localhost:5173` and proxies `/api` to `http://127.0.0.1:8000` (override with `VITE_API_PROXY_TARGET`).
 
 ---
 
-## 2. Docker Container Deployment
+## 3. Database Migrations
 
-For industrial servers or factory server rooms:
+TerraSense runs non-destructive, idempotent schema migrations tracked in `schema_migrations` during startup (`backend/app/core/migrations.py`), and ships standard Alembic configuration (`backend/alembic.ini` and `backend/alembic/versions/`):
 
 ```bash
-# Build and start PostgreSQL, Backend API, and Frontend Nginx
-docker-compose up --build -d
-
-# Check service health
-docker-compose ps
-
-# View backend application logs
-docker-compose logs -f backend
+cd backend
+alembic upgrade head
 ```
 
-Access points:
-- Frontend Application: `http://<SERVER_IP>:80`
-- Backend API & OpenAPI Docs: `http://<SERVER_IP>:8000/docs`
-- PostgreSQL Database: `localhost:5432`
+**Data Safety Policy**: Migrations never run `drop_all()` or reset existing tables. Legacy audit rows are backfilled with SHA-256 chain hashes in place without altering historical payloads.
 
 ---
 
-## 3. Factory Shop-Floor Tablet Setup
+## 4. Docker & Production Deployment
 
-1. Connect shop-floor tablets to the factory local area Wi-Fi network.
-2. Open tablet browser (Google Chrome recommended) and navigate to `http://<FACTORY_SERVER_IP>`.
-3. In browser settings, select **"Add to Home Screen"** to run as a full-screen Progressive Web App (PWA).
-4. Log in using `operator` credentials (`operator` / `operator123`).
-5. Tablet layout provides large numeric touch-input targets and instant visual feedback (green/amber/red) against active tolerance limits.
+### Production Compose
+1. Copy `.env.example` to `.env` and populate strong values for `POSTGRES_USER`, `POSTGRES_PASSWORD`, `SECRET_KEY`, and `ALLOWED_ORIGINS`.
+2. Ensure `ENVIRONMENT=production` and `DEMO_MODE=false`.
+3. Start services:
+   ```bash
+   docker compose up --build -d
+   docker compose ps
+   ```
+4. Place a TLS-terminating reverse proxy (Nginx/Caddy/Traefik with HTTPS certificates) in front of port `80` and restrict firewall ingress to HTTPS (`443`) only. PostgreSQL (`5432`) is isolated on the internal `terrasense_net` Docker network and not exposed on host interfaces.
+
+### Demo Compose Override
+For evaluation demos only:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build -d
+```
+
+---
+
+## 5. Backup & Recovery
+
+### PostgreSQL (Production)
+- **Automated Backup**:
+  ```bash
+  ./scripts/backup_postgres.sh ./backups 30
+  ```
+  Creates compressed custom-format `pg_dump` archives, verifies archive readability via `pg_restore --list`, generates a `.sha256` checksum, and prunes backups older than 30 days. Schedule daily via `cron`:
+  ```cron
+  0 2 * * * cd /opt/terrasense && ./scripts/backup_postgres.sh /var/backups/terrasense 30 >> /var/log/terrasense-backup.log 2>&1
+  ```
+- **Safe Restore** (restores into an explicit target DB after verification and interactive confirmation):
+  ```bash
+  ./scripts/restore_postgres.sh ./backups/terrasense_foundry_quality_20261125_020000Z.dump foundry_quality_restore
+  ```
+
+### SQLite (Local Development)
+```bash
+python scripts/backup_sqlite.py --source backend/foundry_quality.db --dest-dir backups
+```
+Uses SQLite's online `.backup()` API and verifies `PRAGMA integrity_check == 'ok'`.

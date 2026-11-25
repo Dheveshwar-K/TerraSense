@@ -10,11 +10,40 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' })
 
   let colors = 'bg-slate-100 text-slate-700 border-slate-200';
 
-  if (norm === 'OK' || norm === 'CONFORMING' || norm === 'HEALTHY' || norm === 'APPROVED' || norm === 'CLOSED' || norm === 'VALIDATED') {
+  if (
+    norm === 'OK' ||
+    norm === 'CONFORMING' ||
+    norm === 'HEALTHY' ||
+    norm === 'APPROVED' ||
+    norm === 'CLOSED' ||
+    norm === 'VALIDATED' ||
+    norm === 'STABLE' ||
+    norm === 'ASSESSABLE' ||
+    norm === 'SUCCESS'
+  ) {
     colors = 'bg-emerald-50 text-emerald-700 border-emerald-300';
-  } else if (norm === 'WARNING' || norm === 'WARNING_HIGH' || norm === 'WARNING_LOW' || norm === 'PENDING' || norm === 'UNDER_INVESTIGATION' || norm === 'CAPA_PENDING') {
-    colors = 'bg-amber-50 text-amber-700 border-amber-300';
-  } else if (norm === 'OUT_OF_SPEC' || norm === 'OUT_OF_SPEC_HIGH' || norm === 'OUT_OF_SPEC_LOW' || norm === 'CRITICAL' || norm === 'OPEN') {
+  } else if (
+    norm === 'WARNING' ||
+    norm === 'WARNING_HIGH' ||
+    norm === 'WARNING_LOW' ||
+    norm === 'PENDING' ||
+    norm === 'UNDER_INVESTIGATION' ||
+    norm === 'CAPA_PENDING' ||
+    norm === 'IN_PROGRESS' ||
+    norm === 'EXPLORATORY_SMALL_SAMPLE' ||
+    norm === 'EXPLORATORY_UNSTABLE'
+  ) {
+    colors = 'bg-amber-50 text-amber-800 border-amber-300';
+  } else if (
+    norm === 'OUT_OF_SPEC' ||
+    norm === 'OUT_OF_SPEC_HIGH' ||
+    norm === 'OUT_OF_SPEC_LOW' ||
+    norm === 'CRITICAL' ||
+    norm === 'OPEN' ||
+    norm === 'UNSTABLE' ||
+    norm === 'REJECTED' ||
+    norm === 'FAILURE'
+  ) {
     colors = 'bg-rose-50 text-rose-700 border-rose-300 font-bold';
   } else if (norm === 'ACKNOWLEDGED') {
     colors = 'bg-blue-50 text-blue-700 border-blue-300';
@@ -24,7 +53,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' })
 
   return (
     <span className={`inline-flex items-center font-semibold rounded-md border tracking-wider uppercase ${px} ${colors}`}>
-      {status.replace(/_/g, ' ')}
+      {(status || 'UNKNOWN').replace(/_/g, ' ')}
     </span>
   );
 };

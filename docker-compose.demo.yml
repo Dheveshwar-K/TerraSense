@@ -1,0 +1,19 @@
+# Explicit Demo Evaluation Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build -d
+# Never use this override in production.
+services:
+  backend:
+    environment:
+      ENVIRONMENT: demo
+      DEMO_MODE: "true"
+      DATABASE_URL: postgresql://terrasense_demo:DemoOnlyLocalPass_2026!@postgres:5432/foundry_quality_demo
+      SECRET_KEY: ${SECRET_KEY:-demo-only-ephemeral-local-key-not-for-production-use-2026}
+      ALLOWED_ORIGINS: http://localhost,http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "8000:8000"
+
+  postgres:
+    environment:
+      POSTGRES_USER: terrasense_demo
+      POSTGRES_PASSWORD: DemoOnlyLocalPass_2026!
+      POSTGRES_DB: foundry_quality_demo

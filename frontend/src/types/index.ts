@@ -7,7 +7,14 @@ export interface User {
   full_name: string;
   role: UserRole;
   is_active: boolean;
+  must_change_password?: boolean;
   created_at?: string;
+}
+
+export interface AuthConfig {
+  demo_mode: boolean;
+  environment: string;
+  access_token_expire_minutes: number;
 }
 
 export interface ProductionLine {
@@ -35,6 +42,7 @@ export interface Parameter {
   lcl_historical?: number;
   ucl_historical?: number;
   current_revision: number;
+  version?: number;
   testing_method?: string;
   data_validation_min?: number;
   data_validation_max?: number;
@@ -82,6 +90,40 @@ export interface SandTestRecord {
   values: SandTestValue[];
 }
 
+export interface CorrectionRequest {
+  id: number;
+  value_id: number;
+  test_number?: string;
+  line_code?: string;
+  parameter_name?: string;
+  current_value?: number;
+  requested_value: number;
+  unit?: string;
+  reason: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_by_name?: string;
+  reviewed_by_name?: string;
+  review_notes?: string;
+  created_at: string;
+}
+
+export interface SandBatch {
+  id: number;
+  batch_number: string;
+  line_code: string;
+  muller_id: string;
+  batch_weight_kg: number;
+  bentonite_addition_kg: number;
+  coal_dust_addition_kg: number;
+  new_sand_addition_kg: number;
+  return_sand_kg: number;
+  water_addition_liters: number;
+  cycle_time_seconds: number;
+  operator_id?: number;
+  timestamp: string;
+  notes?: string;
+}
+
 export interface SPCPoint {
   index: number;
   timestamp: string;
@@ -108,6 +150,7 @@ export interface IMRChartData {
   unit: string;
   line_code: string;
   sample_size: number;
+  is_constant?: boolean;
   mean: number;
   mean_mr: number;
   sigma_within: number;
@@ -131,7 +174,49 @@ export interface IMRChartData {
   };
   violations_count: number;
   is_stable: boolean;
+  warnings?: string[];
+  message?: string;
+  error?: string;
   points: SPCPoint[];
+}
+
+export interface XBarRPoint {
+  subgroup: number;
+  label: string;
+  size: number;
+  x_bar: number;
+  range: number;
+  ucl_x: number;
+  lcl_x: number;
+  cl_x: number;
+  ucl_r: number;
+  lcl_r: number;
+  cl_r: number;
+  is_out_of_control: boolean;
+}
+
+export interface XBarRChartData {
+  chart_type: string;
+  parameter_name: string;
+  parameter_code: string;
+  unit: string;
+  line_code: string;
+  subgroups_count?: number;
+  subgroup_size?: number;
+  variable_subgroup_sizes?: boolean;
+  grand_mean?: number;
+  mean_range?: number;
+  sigma_within?: number;
+  ucl_x?: number;
+  lcl_x?: number;
+  ucl_r?: number;
+  lcl_r?: number;
+  target?: number;
+  lsl?: number;
+  usl?: number;
+  warnings?: string[];
+  error?: string;
+  points: XBarRPoint[];
 }
 
 export interface ProcessCapabilityData {
@@ -148,21 +233,28 @@ export interface ProcessCapabilityData {
   usl?: number;
   sigma_within?: number;
   sigma_overall?: number;
-  cp?: number;
-  cpk?: number;
-  cpu?: number;
-  cpl?: number;
-  pp?: number;
-  ppk?: number;
-  ppu?: number;
-  ppl?: number;
+  cp?: number | null;
+  cpk?: number | null;
+  cpu?: number | null;
+  cpl?: number | null;
+  pp?: number | null;
+  ppk?: number | null;
+  ppu?: number | null;
+  ppl?: number | null;
   ppm_total?: number;
   ppm_below_lsl?: number;
   ppm_above_usl?: number;
+  yield_percentage?: number;
   assessment?: string;
+  stability_status?: string;
+  capability_status?: string;
   is_stable?: boolean;
   is_normal?: boolean;
-  normality_p_value?: number;
+  normality_rejected?: boolean | null;
+  normality_test_used?: string | null;
+  normality_p_value?: number | null;
+  normality_note?: string;
+  ppm_assumptions?: string;
   warnings?: string[];
   violations_count?: number;
 }
@@ -195,11 +287,13 @@ export interface RejectionRecord {
   rejected_qty: number;
   inspected_qty: number;
   rejection_rate: number;
+  batch_number?: string;
   detection_stage: string;
   severity: string;
   root_cause_candidate?: string;
   corrective_action?: string;
   responsible_person?: string;
+  inspector_name?: string;
   status: string;
 }
 
@@ -227,10 +321,13 @@ export interface CorrelationAnalysis {
   parameter_unit: string;
   line_code: string;
   lag_hours: number;
+  lag_convention?: string;
   sample_size: number;
   has_sufficient_data: boolean;
+  message?: string;
   pearson_r: number;
   pearson_p_value: number;
+  pearson_ci_95?: [number, number] | null;
   spearman_rho: number;
   spearman_p_value: number;
   relationship_strength: string;
@@ -244,13 +341,36 @@ export interface CorrelationAnalysis {
     group_p_value?: number;
   };
   insight: string;
+  limitations?: string[];
   usl?: number;
   lsl?: number;
   scatter_points: Array<{
     x_sand: number;
     y_rejection: number;
     is_out_of_spec: boolean;
+    timestamp?: string;
   }>;
+}
+
+export interface RootCauseInvestigation {
+  id: number;
+  investigation_number: string;
+  title: string;
+  line_code: string;
+  parameter_id?: number;
+  defect_category_id?: number;
+  lag_hours: number;
+  correlation_stat?: number;
+  p_value?: number;
+  five_why_analysis: string[];
+  fishbone_factors: Record<string, string>;
+  findings?: string;
+  conclusion?: string;
+  status: 'IN_PROGRESS' | 'VALIDATED' | 'CLOSED';
+  version: number;
+  investigator_name?: string;
+  created_at: string;
+  updated_at?: string;
 }
 
 export interface CustomerComplaint {
@@ -266,6 +386,7 @@ export interface CustomerComplaint {
   severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   description: string;
   status: 'OPEN' | 'UNDER_INVESTIGATION' | 'CAPA_PENDING' | 'CLOSED';
+  version?: number;
   d1_team?: string;
   d2_problem?: string;
   d3_containment?: string;
@@ -289,6 +410,7 @@ export interface QualityAlert {
   description: string;
   nelson_rule_triggered?: string;
   status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED';
+  version?: number;
   timestamp: string;
   acknowledged_by_name?: string;
   resolved_by_name?: string;
@@ -297,6 +419,7 @@ export interface QualityAlert {
 
 export interface AuditLog {
   id: number;
+  sequence_no?: number;
   timestamp: string;
   user_name: string;
   user_role: string;
@@ -307,6 +430,18 @@ export interface AuditLog {
   new_value?: string;
   reason?: string;
   ip_address?: string;
+  outcome?: string;
+  prev_hash?: string;
+  record_hash?: string;
+}
+
+export interface AuditVerificationResult {
+  valid: boolean;
+  total_records: number;
+  verified_records: number;
+  broken_links: Array<{ audit_id: number; sequence_no: number; issues: string[] }>;
+  head_hash?: string | null;
+  threat_model_note: string;
 }
 
 export interface DashboardMetrics {

@@ -18,7 +18,7 @@ export const StatCard: React.FC<StatCardProps> = ({
   icon: Icon,
   trend,
   trendText,
-  color = 'blue'
+  color = 'blue',
 }) => {
   const colorMap = {
     blue: 'bg-blue-50 text-blue-600 border-blue-100',
@@ -28,14 +28,14 @@ export const StatCard: React.FC<StatCardProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+    <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-xs hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{title}</span>
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{title}</span>
         <div className={`p-2 rounded-lg border ${colorMap[color]}`}>
           <Icon className="w-4 h-4" />
         </div>
       </div>
-      <div className="text-2xl font-black text-slate-800 tracking-tight">{value}</div>
+      <div className="text-2xl font-black text-slate-900 tracking-tight tabular-nums">{value}</div>
       {(subtext || trendText) && (
         <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
           {trendText && (

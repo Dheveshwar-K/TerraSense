@@ -1,6 +1,7 @@
-from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel
+from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field
+
 
 class AlertResponse(BaseModel):
     id: int
@@ -13,13 +14,15 @@ class AlertResponse(BaseModel):
     description: str
     nelson_rule_triggered: Optional[str] = None
     status: str
+    version: int = 1
     timestamp: datetime
     acknowledged_by_name: Optional[str] = None
     resolved_by_name: Optional[str] = None
     resolution_notes: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class AlertActionRequest(BaseModel):
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=1000)
+    expected_version: Optional[int] = None

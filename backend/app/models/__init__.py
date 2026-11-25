@@ -1,4 +1,4 @@
-from app.models.user import User
+from app.models.user import User, RevokedToken
 from app.models.line import ProductionLine
 from app.models.parameter import Parameter, ParameterSpecification
 from app.models.sand_batch import SandBatch
@@ -11,6 +11,7 @@ from app.models.audit import AuditLog
 
 __all__ = [
     "User",
+    "RevokedToken",
     "ProductionLine",
     "Parameter",
     "ParameterSpecification",

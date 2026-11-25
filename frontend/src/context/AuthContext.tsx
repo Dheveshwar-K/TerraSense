@@ -1,101 +1,148 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { User, UserRole } from '../types';
 import { api } from '../services/api';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
+  demoMode: boolean;
+  environment: string;
   loading: boolean;
   selectedLine: string;
   setSelectedLine: (line: string) => void;
   selectedShift: number;
   setSelectedShift: (shift: number) => void;
   openAlertsCount: number;
-  refreshAlertsCount: () => void;
+  refreshAlertsCount: (lineOverride?: string) => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
-  switchRole: (role: UserRole) => Promise<void>;
+  logout: () => Promise<void>;
+  switchRole: (role: UserRole, userId?: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('ps010_token'));
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('ps010_token'));
+  const [demoMode, setDemoMode] = useState<boolean>(false);
+  const [environment, setEnvironment] = useState<string>('development');
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedLine, setSelectedLine] = useState<string>('ALL');
   const [selectedShift, setSelectedShift] = useState<number>(1);
   const [openAlertsCount, setOpenAlertsCount] = useState<number>(0);
 
-  const refreshAlertsCount = async () => {
+  const selectedLineRef = useRef(selectedLine);
+  selectedLineRef.current = selectedLine;
+
+  const refreshAlertsCount = useCallback(async (lineOverride?: string) => {
+    const activeLine = lineOverride ?? selectedLineRef.current;
     try {
-      const alerts = await api.getAlerts(selectedLine !== 'ALL' ? selectedLine : undefined, 'OPEN');
+      const alerts = await api.getAlerts(activeLine !== 'ALL' ? activeLine : undefined, 'OPEN');
       setOpenAlertsCount(alerts.length);
     } catch {
-      // ignore in offline/unauthorized state
+      // ignore in offline/unauthenticated state
     }
-  };
+  }, []);
+
+  const applyAuthSession = useCallback(
+    (res: { access_token: string; refresh_token?: string; user: User }) => {
+      localStorage.setItem('ps010_token', res.access_token);
+      if (res.refresh_token) {
+        localStorage.setItem('ps010_refresh_token', res.refresh_token);
+      }
+      setToken(res.access_token);
+      setUser(res.user);
+    },
+    []
+  );
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const res = await api.login(username, password);
+      applyAuthSession(res);
+      await refreshAlertsCount();
+    },
+    [applyAuthSession, refreshAlertsCount]
+  );
+
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      // proceed with client sign-out even if token already expired
+    } finally {
+      localStorage.removeItem('ps010_token');
+      localStorage.removeItem('ps010_refresh_token');
+      setToken(null);
+      setUser(null);
+      setOpenAlertsCount(0);
+    }
+  }, []);
+
+  const switchRole = useCallback(
+    async (role: UserRole, userId?: string) => {
+      setLoading(true);
+      try {
+        const res = await api.demoSwitch(role, userId);
+        applyAuthSession(res);
+        await refreshAlertsCount();
+      } finally {
+        setLoading(false);
+      }
+    },
+    [applyAuthSession, refreshAlertsCount]
+  );
 
   useEffect(() => {
+    let mounted = true;
     const initAuth = async () => {
+      let isDemo = false;
+      try {
+        const cfg = await api.getAuthConfig();
+        if (mounted) {
+          isDemo = Boolean(cfg.demo_mode);
+          setDemoMode(isDemo);
+          setEnvironment(cfg.environment || 'development');
+        }
+      } catch {
+        // Fallback when backend is unreachable
+      }
+
       const storedToken = localStorage.getItem('ps010_token');
       if (storedToken) {
         try {
           const me = await api.getMe();
-          setUser(me);
-          refreshAlertsCount();
+          if (mounted) {
+            setUser(me);
+            await refreshAlertsCount('ALL');
+          }
         } catch {
-          // Token invalid, login default demo admin
-          await switchRole('admin');
+          localStorage.removeItem('ps010_token');
+          localStorage.removeItem('ps010_refresh_token');
+          if (mounted) {
+            setToken(null);
+          }
         }
-      } else {
-        // Auto-login default admin for seamless immediate demo access
-        await switchRole('admin');
       }
-      setLoading(false);
+
+      if (mounted) {
+        setLoading(false);
+      }
     };
 
     initAuth();
-  }, []);
-
-  const login = async (username: string, password: string) => {
-    const res = await api.login(username, password);
-    localStorage.setItem('ps010_token', res.access_token);
-    setToken(res.access_token);
-    setUser(res.user);
-    refreshAlertsCount();
-  };
-
-  const logout = () => {
-    localStorage.removeItem('ps010_token');
-    setToken(null);
-    setUser(null);
-  };
-
-  const switchRole = async (role: UserRole) => {
-    setLoading(true);
-    try {
-      const creds: Record<UserRole, { u: string; p: string }> = {
-        operator: { u: 'operator', p: 'operator123' },
-        quality_engineer: { u: 'quality_engineer', p: 'quality123' },
-        supervisor: { u: 'supervisor', p: 'super123' },
-        quality_manager: { u: 'admin', p: 'admin123' },
-        admin: { u: 'admin', p: 'admin123' },
-      };
-      const { u, p } = creds[role] || creds['admin'];
-      await login(u, p);
-    } catch (err) {
-      console.error('Failed to switch role', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    return () => {
+      mounted = false;
+    };
+  }, [refreshAlertsCount]);
 
   return (
     <AuthContext.Provider
       value={{
         user,
         token,
+        demoMode,
+        environment,
         loading,
         selectedLine,
         setSelectedLine,

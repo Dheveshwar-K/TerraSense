@@ -1,23 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import {
-  SlidersHorizontal,
-  Edit3,
-  History,
-  Shield,
-  CheckCircle2,
-  AlertTriangle,
-  Info
-} from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Edit3, History, RefreshCw, Shield, SlidersHorizontal } from 'lucide-react';
 import { api } from '../../services/api';
 import { Parameter, SpecificationRevision } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 
 export const SpecificationsPage: React.FC = () => {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [parameters, setParameters] = useState<Parameter[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Edit Specification Dialog
   const [editingParam, setEditingParam] = useState<Parameter | null>(null);
   const [targetVal, setTargetVal] = useState<number>(0);
   const [lslVal, setLslVal] = useState<number>(0);
@@ -25,26 +18,25 @@ export const SpecificationsPage: React.FC = () => {
   const [changeReason, setChangeReason] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
 
-  // Revision History Modal
   const [historyParam, setHistoryParam] = useState<Parameter | null>(null);
   const [revisions, setRevisions] = useState<SpecificationRevision[]>([]);
   const [loadingRevisions, setLoadingRevisions] = useState<boolean>(false);
 
-  const loadParams = async () => {
+  const loadParams = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getParameters();
       setParameters(data);
-    } catch (err) {
-      console.error('Failed to load parameters', err);
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to load parameters', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast]);
 
   useEffect(() => {
     loadParams();
-  }, []);
+  }, [loadParams]);
 
   const openEditModal = (p: Parameter) => {
     setEditingParam(p);
@@ -60,8 +52,8 @@ export const SpecificationsPage: React.FC = () => {
     try {
       const revs = await api.getParameterRevisions(p.id);
       setRevisions(revs);
-    } catch (err) {
-      console.error('Failed to load revisions', err);
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to load revisions', 'error');
     } finally {
       setLoadingRevisions(false);
     }
@@ -69,48 +61,67 @@ export const SpecificationsPage: React.FC = () => {
 
   const handleSaveSpec = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingParam || !changeReason.trim()) return;
+    if (!editingParam || !changeReason.trim() || saving) return;
+
+    if (lslVal >= uslVal) {
+      showToast('Lower Spec Limit (LSL) must be strictly less than Upper Spec Limit (USL).', 'error');
+      return;
+    }
+    if (targetVal < lslVal || targetVal > uslVal) {
+      showToast('Target value must lie within [LSL, USL].', 'error');
+      return;
+    }
+
     setSaving(true);
     try {
       await api.updateSpecification(editingParam.id, {
         target_value: targetVal,
         lsl: lslVal,
         usl: uslVal,
-        revision_reason: changeReason
+        revision_reason: changeReason.trim(),
+        expected_version: editingParam.version,
       });
-      alert(`Specification updated for ${editingParam.name}! New Revision created in audit history.`);
+      showToast(`Specification updated for ${editingParam.name}. New revision recorded.`, 'success');
       setEditingParam(null);
-      loadParams();
-    } catch (err: any) {
-      alert(`Error updating specification: ${err.message}`);
+      await loadParams();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Error updating specification', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const canEdit = user && ['quality_engineer', 'quality_manager', 'admin'].includes(user.role);
+  const canEdit = Boolean(user && ['quality_engineer', 'quality_manager', 'admin'].includes(user.role));
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-black text-slate-800 tracking-tight flex items-center gap-2">
             <SlidersHorizontal className="w-5 h-5 text-blue-600" />
-            PARAMETER SPECIFICATIONS & TOLERANCE LIMITS
+            PARAMETER SPECIFICATIONS &amp; TOLERANCE LIMITS
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
             Engineering specification limits (LSL, USL, Target) distinct from statistical control limits (LCL, UCL), with revision tracking.
           </p>
         </div>
 
-        <div className="text-xs font-semibold px-3 py-1.5 bg-blue-50 text-blue-800 rounded-lg border border-blue-200 flex items-center gap-1.5">
-          <Shield className="w-4 h-4 text-blue-600" />
-          IATF 16949 Revision Traceability
+        <div className="flex items-center gap-2">
+          <div className="text-xs font-semibold px-3 py-1.5 bg-blue-50 text-blue-800 rounded-lg border border-blue-200 flex items-center gap-1.5">
+            <Shield className="w-4 h-4 text-blue-600" />
+            IATF 16949 Revision Traceability
+          </div>
+          <button
+            type="button"
+            onClick={() => loadParams()}
+            aria-label="Refresh specifications"
+            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg border border-slate-200"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
-      {/* Specifications Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
           <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
@@ -141,16 +152,23 @@ export const SpecificationsPage: React.FC = () => {
                   <td className="px-4 py-3 font-mono font-bold text-blue-700">{p.code}</td>
                   <td className="px-4 py-3 font-bold text-slate-800">{p.name}</td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.category === 'PHYSICAL' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        p.category === 'PHYSICAL'
+                          ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}
+                    >
                       {p.category}
                     </span>
                   </td>
                   <td className="px-4 py-3 font-semibold text-slate-600">{p.unit}</td>
-                  <td className="px-4 py-3 text-center font-bold text-slate-800">{p.lsl}</td>
-                  <td className="px-4 py-3 text-center font-bold text-blue-700 bg-blue-50/50">{p.target_value}</td>
-                  <td className="px-4 py-3 text-center font-bold text-slate-800">{p.usl}</td>
+                  <td className="px-4 py-3 text-center font-bold text-slate-800 tabular-nums">{p.lsl}</td>
+                  <td className="px-4 py-3 text-center font-bold text-blue-700 bg-blue-50/50 tabular-nums">{p.target_value}</td>
+                  <td className="px-4 py-3 text-center font-bold text-slate-800 tabular-nums">{p.usl}</td>
                   <td className="px-4 py-3 text-center">
                     <button
+                      type="button"
                       onClick={() => openHistoryModal(p)}
                       className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] border border-slate-200"
                       title="View Revision History"
@@ -164,14 +182,17 @@ export const SpecificationsPage: React.FC = () => {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button
+                        type="button"
                         onClick={() => openHistoryModal(p)}
                         className="text-slate-500 hover:text-slate-800 p-1"
                         title="History"
+                        aria-label={`View revision history for ${p.name}`}
                       >
                         <History className="w-4 h-4" />
                       </button>
                       {canEdit && (
                         <button
+                          type="button"
                           onClick={() => openEditModal(p)}
                           className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded text-xs border border-blue-200 flex items-center gap-1"
                         >
@@ -188,61 +209,57 @@ export const SpecificationsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Edit Specification Modal */}
       {editingParam && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-sm font-bold text-slate-800 uppercase flex items-center gap-2">
                 <Edit3 className="w-4 h-4 text-blue-600" />
                 Revise Specification: {editingParam.name}
               </h3>
-              <button onClick={() => setEditingParam(null)} className="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+              <button type="button" onClick={() => setEditingParam(null)} className="text-slate-400 hover:text-slate-600 text-lg">
+                &times;
+              </button>
             </div>
 
             <div className="text-xs bg-amber-50 p-3 rounded-lg border border-amber-200 text-amber-800 space-y-1">
-              <b>Important:</b> Updating specifications will increment the revision number (Current: Rev {editingParam.current_revision} &rarr; Rev {editingParam.current_revision + 1}). Past historical tests will remain tied to their respective historical revisions.
+              <b>Important:</b> Updating specifications will increment the revision number (Current: Rev{' '}
+              {editingParam.current_revision} &rarr; Rev {editingParam.current_revision + 1}). Past historical tests remain tied to their applicable revisions.
             </div>
 
             <form onSubmit={handleSaveSpec} className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Lower Spec (LSL)
-                  </label>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Lower Spec (LSL)</label>
                   <input
                     type="number"
                     step="any"
                     required
                     value={lslVal}
                     onChange={e => setLslVal(Number(e.target.value))}
-                    className="w-full text-sm font-bold bg-white border border-slate-300 rounded-lg p-2 text-right"
+                    className="w-full text-sm font-bold bg-white border border-slate-300 rounded-lg p-2 text-right tabular-nums"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Target Value
-                  </label>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Target Value</label>
                   <input
                     type="number"
                     step="any"
                     required
                     value={targetVal}
                     onChange={e => setTargetVal(Number(e.target.value))}
-                    className="w-full text-sm font-bold bg-white border border-slate-300 rounded-lg p-2 text-right text-blue-600"
+                    className="w-full text-sm font-bold bg-white border border-slate-300 rounded-lg p-2 text-right text-blue-600 tabular-nums"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                    Upper Spec (USL)
-                  </label>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Upper Spec (USL)</label>
                   <input
                     type="number"
                     step="any"
                     required
                     value={uslVal}
                     onChange={e => setUslVal(Number(e.target.value))}
-                    className="w-full text-sm font-bold bg-white border border-slate-300 rounded-lg p-2 text-right"
+                    className="w-full text-sm font-bold bg-white border border-slate-300 rounded-lg p-2 text-right tabular-nums"
                   />
                 </div>
               </div>
@@ -254,9 +271,10 @@ export const SpecificationsPage: React.FC = () => {
                 <textarea
                   rows={3}
                   required
+                  minLength={5}
                   value={changeReason}
                   onChange={e => setChangeReason(e.target.value)}
-                  placeholder="e.g. Tightened moisture band per customer quality requirement TM-V6-ENG revision 3 to eliminate microporosity."
+                  placeholder="e.g. Tightened moisture band per customer quality requirement TM-V6-ENG revision 3."
                   className="w-full text-xs bg-white border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -272,7 +290,7 @@ export const SpecificationsPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm"
+                  className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 rounded-lg shadow-sm"
                 >
                   {saving ? 'Saving Revision...' : 'Save & Increment Revision'}
                 </button>
@@ -282,16 +300,17 @@ export const SpecificationsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Revision History Modal */}
       {historyParam && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-sm font-bold text-slate-800 uppercase flex items-center gap-2">
                 <History className="w-4 h-4 text-blue-600" />
                 Specification Revision History: {historyParam.name}
               </h3>
-              <button onClick={() => setHistoryParam(null)} className="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+              <button type="button" onClick={() => setHistoryParam(null)} className="text-slate-400 hover:text-slate-600 text-lg">
+                &times;
+              </button>
             </div>
 
             {loadingRevisions ? (
@@ -310,11 +329,11 @@ export const SpecificationsPage: React.FC = () => {
                         Effective: {new Date(rev.effective_date).toLocaleDateString()}
                       </span>
                     </div>
-                    <div className="font-semibold text-slate-700">
+                    <div className="font-semibold text-slate-700 tabular-nums">
                       LSL: <b>{rev.lsl}</b> | Target: <b className="text-blue-600">{rev.target_value}</b> | USL: <b>{rev.usl}</b>
                     </div>
                     <div className="text-slate-500 italic bg-slate-50 p-2 rounded border border-slate-100 text-[11px]">
-                      "{rev.change_reason}"
+                      &ldquo;{rev.change_reason}&rdquo;
                     </div>
                   </div>
                 ))}
@@ -323,6 +342,7 @@ export const SpecificationsPage: React.FC = () => {
 
             <div className="flex justify-end pt-2 border-t border-slate-100">
               <button
+                type="button"
                 onClick={() => setHistoryParam(null)}
                 className="px-4 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
               >

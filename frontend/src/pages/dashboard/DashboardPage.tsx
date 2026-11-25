@@ -1,98 +1,106 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Activity,
   AlertTriangle,
-  CheckCircle2,
-  TrendingDown,
-  ShieldCheck,
-  RefreshCw,
-  Database,
   ArrowRight,
-  Flame,
-  LineChart as LineChartIcon
+  CheckCircle2,
+  Database,
+  LineChart as LineChartIcon,
+  RefreshCw,
+  ShieldCheck,
+  TrendingDown,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
-  ResponsiveContainer,
-  LineChart,
+  CartesianGrid,
+  Legend,
   Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend
 } from 'recharts';
 import { api } from '../../services/api';
 import { DashboardMetrics, LineCardInfo, QualityAlert } from '../../types';
 import { StatCard } from '../../components/StatCard';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 
 export const DashboardPage: React.FC = () => {
-  const { selectedLine, refreshAlertsCount } = useAuth();
+  const { selectedLine, refreshAlertsCount, demoMode, user } = useAuth();
+  const { showToast } = useToast();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [lines, setLines] = useState<LineCardInfo[]>([]);
   const [rejectionTrends, setRejectionTrends] = useState<any[]>([]);
   const [recentAlerts, setRecentAlerts] = useState<QualityAlert[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState<boolean>(false);
+  const [confirmSeed, setConfirmSeed] = useState<boolean>(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const data = await api.getDashboardSummary();
+      const [data, alerts] = await Promise.all([
+        api.getDashboardSummary(selectedLine),
+        api.getAlerts(selectedLine !== 'ALL' ? selectedLine : undefined),
+      ]);
       setMetrics(data.metrics);
       setLines(data.lines);
       setRejectionTrends(data.rejection_trends);
-
-      const alerts = await api.getAlerts(selectedLine !== 'ALL' ? selectedLine : undefined, undefined, undefined);
       setRecentAlerts(alerts.slice(0, 5));
-    } catch (err) {
-      console.error('Failed to load dashboard data', err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to load dashboard summary';
+      setError(msg);
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedLine]);
 
   useEffect(() => {
     loadData();
-  }, [selectedLine]);
+  }, [loadData]);
 
   const handleSeedData = async () => {
-    if (!confirm('Re-seed realistic Quality 4.0 foundry dataset for lines D1, D2, D3, D4?')) return;
     setSeeding(true);
     try {
       await api.seedData(true);
       await loadData();
-      refreshAlertsCount();
-      alert('Demo dataset successfully refreshed!');
-    } catch (err: any) {
-      alert(`Error seeding: ${err.message}`);
+      await refreshAlertsCount();
+      setConfirmSeed(false);
+      showToast('Demo dataset refreshed for lines D1–D4.', 'success');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Error resetting demo dataset', 'error');
     } finally {
       setSeeding(false);
     }
   };
 
   const filteredLines = selectedLine === 'ALL' ? lines : lines.filter(l => l.line_code === selectedLine);
+  const canSeedDemo = demoMode && user && ['admin', 'quality_manager'].includes(user.role);
+  const highestScrapLine = [...lines].sort((a, b) => b.rejection_rate - a.rejection_rate)[0];
 
   return (
     <div className="space-y-6">
       {/* Top Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-black text-slate-800 tracking-tight">FOUNDRY QUALITY 4.0 OVERVIEW</h1>
             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700 tracking-wider">
               REAL-TIME SPC
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Integrated Digital Sand Testing, Process Capability & Downstream Rejection Analytics for Lines D1, D2, D3 & D4.
+            Integrated Digital Sand Testing, Process Capability &amp; Downstream Rejection Analytics for Lines D1, D2, D3 &amp; D4.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
           <button
+            type="button"
             onClick={() => loadData()}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 transition-colors"
@@ -100,23 +108,35 @@ export const DashboardPage: React.FC = () => {
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          <button
-            onClick={handleSeedData}
-            disabled={seeding}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors"
-          >
-            <Database className="w-3.5 h-3.5" />
-            {seeding ? 'Seeding...' : 'Reset Demo Data'}
-          </button>
+          {canSeedDemo && (
+            <button
+              type="button"
+              onClick={() => setConfirmSeed(true)}
+              disabled={seeding}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors"
+            >
+              <Database className="w-3.5 h-3.5" />
+              {seeding ? 'Resetting...' : 'Reset Demo Data'}
+            </button>
+          )}
         </div>
       </div>
+
+      {error && (
+        <div role="alert" className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-center justify-between text-xs text-rose-800">
+          <span>{error}</span>
+          <button type="button" onClick={loadData} className="px-3 py-1 bg-rose-600 text-white font-bold rounded-lg">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Tests Conforming"
-          value={`${metrics?.conforming_percentage || 0}%`}
-          subtext="Past 7 Days (In-Spec)"
+          value={metrics ? `${metrics.conforming_percentage}%` : '--'}
+          subtext={`Past 7 Days (${metrics?.total_tests_week ?? 0} tests)`}
           icon={CheckCircle2}
           color="emerald"
           trend="up"
@@ -124,21 +144,21 @@ export const DashboardPage: React.FC = () => {
         />
         <StatCard
           title="Scrap / Rejection Rate"
-          value={`${metrics?.overall_rejection_rate || 0}%`}
-          subtext={`Rejected: ${metrics?.total_rejected_qty || 0} / Inspected: ${metrics?.total_inspected_qty || 0}`}
+          value={metrics ? `${metrics.overall_rejection_rate}%` : '--'}
+          subtext={`Rejected: ${metrics?.total_rejected_qty ?? 0} / Inspected: ${metrics?.total_inspected_qty ?? 0}`}
           icon={TrendingDown}
           color={Number(metrics?.overall_rejection_rate || 0) > 3.0 ? 'rose' : 'blue'}
         />
         <StatCard
           title="Open Quality Alerts"
-          value={metrics?.open_alerts || 0}
+          value={metrics?.open_alerts ?? 0}
           subtext="Nelson rules & spec violations"
           icon={AlertTriangle}
           color={(metrics?.open_alerts || 0) > 0 ? 'rose' : 'emerald'}
         />
         <StatCard
           title="Customer Complaints"
-          value={metrics?.active_complaints || 0}
+          value={metrics?.active_complaints ?? 0}
           subtext="Active 8D CAPA investigations"
           icon={ShieldCheck}
           color="amber"
@@ -151,7 +171,7 @@ export const DashboardPage: React.FC = () => {
           <h2 className="text-sm font-bold text-slate-800 tracking-wider uppercase">
             Production Lines Quality Status
           </h2>
-          <span className="text-xs text-slate-400 font-medium">Automatic Green Sand Molding Plants</span>
+          <span className="text-xs text-slate-500 font-medium">Automatic Green Sand Molding Plants</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -181,14 +201,14 @@ export const DashboardPage: React.FC = () => {
 
               <div className="space-y-2 py-2 border-y border-slate-100 text-xs">
                 <div className="flex justify-between text-slate-600">
-                  <span>Rejection Rate:</span>
-                  <span className={`font-bold ${line.rejection_rate > 3.0 ? 'text-rose-600' : 'text-slate-800'}`}>
+                  <span>7-Day Scrap Rate:</span>
+                  <span className={`font-bold tabular-nums ${line.rejection_rate > 3.0 ? 'text-rose-600' : 'text-slate-800'}`}>
                     {line.rejection_rate}%
                   </span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Open Alerts:</span>
-                  <span className={`font-bold ${line.open_alerts > 0 ? 'text-rose-600' : 'text-slate-800'}`}>
+                  <span className={`font-bold tabular-nums ${line.open_alerts > 0 ? 'text-rose-600' : 'text-slate-800'}`}>
                     {line.open_alerts}
                   </span>
                 </div>
@@ -235,25 +255,40 @@ export const DashboardPage: React.FC = () => {
           </div>
 
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rejectionTrends} margin={{ top: 5, right: 20, left: -20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => d.slice(5)} />
-                <YAxis tick={{ fontSize: 10 }} unit="%" domain={[0, 'auto']} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', color: '#fff', fontSize: '11px' }}
-                  formatter={(val: any) => [`${val}%`, 'Scrap Rate']}
-                />
-                <Legend wrapperStyle={{ fontSize: '11px' }} />
-                <Line type="monotone" dataKey="D1" stroke="#2563eb" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="D2" stroke="#e11d48" strokeWidth={2.5} dot={false} />
-                <Line type="monotone" dataKey="D3" stroke="#d97706" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="D4" stroke="#059669" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+            {rejectionTrends.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                No rejection trend records in the last 14 days.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={rejectionTrends} margin={{ top: 5, right: 20, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => String(d).slice(5)} />
+                  <YAxis tick={{ fontSize: 10 }} unit="%" domain={[0, 'auto']} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderColor: '#1e293b',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontSize: '11px',
+                    }}
+                    formatter={(val: any) => [`${val}%`, 'Scrap Rate']}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '11px' }} />
+                  <Line type="monotone" dataKey="D1" stroke="#2563eb" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="D2" stroke="#e11d48" strokeWidth={2.5} dot={false} />
+                  <Line type="monotone" dataKey="D3" stroke="#d97706" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="D4" stroke="#059669" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
-          <div className="mt-2 text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded border border-slate-200">
-            <b>Engineer Insight:</b> Notice the scrap spike on <b>Line D2</b> between days 13-15 (~6.2%). This directly correlates with moisture surge deviations in the sand laboratory. Check the <b>Correlation Engine</b> for details.
+          <div className="mt-2 text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+            <b>Live Line Summary:</b>{' '}
+            {highestScrapLine
+              ? `Line ${highestScrapLine.line_code} currently exhibits the highest 7-day scrap rate (${highestScrapLine.rejection_rate}%) with ${highestScrapLine.open_alerts} open alert(s). Inspect the Correlation Engine for potential sand parameter associations.`
+              : 'All molding lines within baseline telemetry.'}
           </div>
         </div>
 
@@ -264,7 +299,7 @@ export const DashboardPage: React.FC = () => {
               <h3 className="text-sm font-bold text-slate-800 tracking-wider uppercase">
                 Active Alerts Feed
               </h3>
-              <p className="text-xs text-slate-400">Spec & Nelson Rule Triggers</p>
+              <p className="text-xs text-slate-400">Spec &amp; Nelson Rule Triggers</p>
             </div>
             <Link to="/alerts" className="text-xs font-semibold text-blue-600 hover:text-blue-800">
               View All ({metrics?.open_alerts || 0})
@@ -303,6 +338,35 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal for Demo Reset */}
+      {confirmSeed && (
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-800 uppercase">Reset Demo Dataset?</h3>
+            <p className="text-xs text-slate-600">
+              This will regenerate the simulated 30-day foundry dataset for Lines D1–D4 in demo mode.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmSeed(false)}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSeedData}
+                disabled={seeding}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+              >
+                {seeding ? 'Resetting...' : 'Confirm Reset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

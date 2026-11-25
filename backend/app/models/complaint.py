@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, CheckConstraint
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+
 
 class CustomerComplaint(Base):
     __tablename__ = "customer_complaints"
@@ -17,7 +18,7 @@ class CustomerComplaint(Base):
     affected_qty = Column(Integer, nullable=False)
     severity = Column(String(20), default="HIGH")  # LOW, MEDIUM, HIGH, CRITICAL
     description = Column(Text, nullable=False)
-    
+
     # 8D Discipline Fields
     d1_team = Column(String(255), nullable=True)
     d2_problem = Column(Text, nullable=True)
@@ -27,11 +28,16 @@ class CustomerComplaint(Base):
     d6_validation = Column(Text, nullable=True)
     d7_preventive_action = Column(Text, nullable=True)
     d8_closure = Column(Text, nullable=True)
-    
+
     responsible_person = Column(String(100), nullable=True)
     due_date = Column(String(10), nullable=True)
-    status = Column(String(20), default="OPEN")  # OPEN, INVESTIGATION, CAPA_PENDING, CLOSED
+    status = Column(String(20), default="OPEN")  # OPEN, UNDER_INVESTIGATION, CAPA_PENDING, CLOSED
+    version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     product = relationship("CastingProduct")
     defect_category = relationship("DefectCategory")
+
+    __table_args__ = (
+        CheckConstraint("affected_qty > 0", name="ck_complaint_affected_pos"),
+    )

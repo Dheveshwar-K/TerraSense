@@ -1,0 +1,30 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Local SQLite databases & backups
+*.db
+*.sqlite
+*.sqlite3
+backups/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

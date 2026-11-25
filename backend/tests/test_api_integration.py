@@ -93,13 +93,15 @@ def test_pareto_analysis_endpoint(db, admin_user):
 
 def test_sand_test_entry_and_duplicate_prevention(db, operator_user):
     from app.models.sand_test import SandTestRecord
-    # Cleanup prior test entry if present
-    db.query(SandTestRecord).filter(
+    # Cleanup prior test entry if present (using ORM cascade so child SandTestValue rows are deleted cleanly)
+    prior_records = db.query(SandTestRecord).filter(
         SandTestRecord.line_code == "D4",
         SandTestRecord.test_date == "2026-11-25",
         SandTestRecord.shift == 2,
         SandTestRecord.test_hour == 16
-    ).delete()
+    ).all()
+    for rec in prior_records:
+        db.delete(rec)
     db.commit()
 
     param = db.query(Parameter).filter(Parameter.code == "MOISTURE").first()

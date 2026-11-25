@@ -1,28 +1,29 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ClipboardCheck,
   AlertCircle,
   CheckCircle2,
-  HelpCircle,
+  ClipboardCheck,
+  Clock,
   RotateCcw,
   Save,
-  Clock,
-  Sparkles
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { Parameter } from '../../types';
 import { useAuth } from '../../context/AuthContext';
-import { StatusBadge } from '../../components/StatusBadge';
+import { useToast } from '../../context/ToastContext';
 
 export const SandTestEntryPage: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const { selectedLine, selectedShift } = useAuth();
+  const { selectedLine, selectedShift, refreshAlertsCount } = useAuth();
+  const { showToast } = useToast();
 
-  const [lineCode, setLineCode] = useState<string>(searchParams.get('line') || (selectedLine !== 'ALL' ? selectedLine : 'D1'));
+  const [lineCode, setLineCode] = useState<string>(
+    searchParams.get('line') || (selectedLine !== 'ALL' ? selectedLine : 'D1')
+  );
   const [shift, setShift] = useState<number>(selectedShift || 1);
-  const [testDate, setTestDate] = useState<string>(new Date().toISOString().slice(0, 10));
-  const [testHour, setTestHour] = useState<number>(new Date().getHours());
+  const [testDate, setTestDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [testHour, setTestHour] = useState<number>(() => Math.max(1, Math.min(24, new Date().getHours() || 1)));
   const [batchNumber, setBatchNumber] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
 
@@ -33,43 +34,65 @@ export const SandTestEntryPage: React.FC = () => {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
+    let active = true;
     const loadParams = async () => {
+      setLoading(true);
       try {
         const data = await api.getParameters('PHYSICAL', 'HOURLY');
+        if (!active) return;
         setParameters(data);
-
-        // Pre-fill with reasonable nominal target values for fast testing convenience
         const initial: Record<number, string> = {};
         data.forEach(p => {
           initial[p.id] = p.target_value.toString();
         });
         setValues(initial);
-        setBatchNumber(`BAT-${lineCode}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-S${shift}`);
-      } catch (err) {
-        console.error('Failed to load parameters', err);
+      } catch (err: unknown) {
+        if (active) {
+          showToast(err instanceof Error ? err.message : 'Failed to load parameters', 'error');
+        }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
     loadParams();
-  }, [lineCode, shift]);
+    return () => {
+      active = false;
+    };
+  }, [showToast]);
+
+  useEffect(() => {
+    setBatchNumber(`BAT-${lineCode}-${testDate.replace(/-/g, '')}-S${shift}`);
+  }, [lineCode, testDate, shift]);
 
   const handleValueChange = (paramId: number, val: string) => {
     setValues(prev => ({ ...prev, [paramId]: val }));
   };
 
   const getValidationState = (param: Parameter, valStr: string) => {
-    if (!valStr || isNaN(Number(valStr))) return { status: 'EMPTY', text: 'Required' };
+    if (!valStr.trim() || isNaN(Number(valStr))) {
+      return { status: 'EMPTY', text: 'Required', color: 'text-slate-600 bg-slate-100 border-slate-200' };
+    }
     const num = Number(valStr);
-
+    if (
+      (param.data_validation_min !== undefined && num < param.data_validation_min) ||
+      (param.data_validation_max !== undefined && num > param.data_validation_max)
+    ) {
+      return {
+        status: 'INVALID_SENSOR',
+        text: `Sensor Range (${param.data_validation_min}–${param.data_validation_max})`,
+        color: 'text-rose-700 bg-rose-100 border-rose-400',
+      };
+    }
     if (param.usl !== undefined && num > param.usl) {
       return { status: 'OUT_OF_SPEC', text: `Exceeds USL (${param.usl})`, color: 'text-rose-600 bg-rose-50 border-rose-300' };
     }
     if (param.lsl !== undefined && num < param.lsl) {
       return { status: 'OUT_OF_SPEC', text: `Below LSL (${param.lsl})`, color: 'text-rose-600 bg-rose-50 border-rose-300' };
     }
-    if ((param.usl !== undefined && num > param.usl - 0.15 * (param.usl - param.lsl)) ||
-        (param.lsl !== undefined && num < param.lsl + 0.15 * (param.usl - param.lsl))) {
+    if (
+      (param.usl !== undefined && num > param.usl - 0.15 * (param.usl - param.lsl)) ||
+      (param.lsl !== undefined && num < param.lsl + 0.15 * (param.usl - param.lsl))
+    ) {
       return { status: 'WARNING', text: 'Near Spec Margin', color: 'text-amber-600 bg-amber-50 border-amber-300' };
     }
     return { status: 'OK', text: 'In Spec', color: 'text-emerald-600 bg-emerald-50 border-emerald-300' };
@@ -77,38 +100,59 @@ export const SandTestEntryPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
+    if (submitting) return;
     setFeedback(null);
 
+    for (const p of parameters) {
+      const raw = values[p.id];
+      const num = Number(raw);
+      if (raw === undefined || raw.trim() === '' || !Number.isFinite(num)) {
+        setFeedback({ type: 'error', message: `Please enter a valid numeric value for ${p.name}.` });
+        return;
+      }
+      if (p.data_validation_min !== undefined && num < p.data_validation_min) {
+        setFeedback({
+          type: 'error',
+          message: `${p.name} value (${num}) is below physical sensor limit (${p.data_validation_min}).`,
+        });
+        return;
+      }
+      if (p.data_validation_max !== undefined && num > p.data_validation_max) {
+        setFeedback({
+          type: 'error',
+          message: `${p.name} value (${num}) exceeds physical sensor limit (${p.data_validation_max}).`,
+        });
+        return;
+      }
+    }
+
+    setSubmitting(true);
     try {
       const payloadValues = parameters.map(p => ({
         parameter_id: p.id,
-        measured_value: parseFloat(values[p.id] || p.target_value.toString())
+        measured_value: Number(values[p.id]),
       }));
 
       const res = await api.createSandTest({
         line_code: lineCode,
         test_type: 'HOURLY_PHYSICAL',
         test_date: testDate,
-        shift: shift,
+        shift,
         test_hour: testHour,
         batch_number: batchNumber,
-        notes: notes,
-        values: payloadValues
+        notes,
+        values: payloadValues,
       });
 
-      setFeedback({
-        type: 'success',
-        message: `Sand test entry #${res.test_number} recorded successfully! Status: ${res.status}. Automatic SPC rules evaluated.`
-      });
-
-      // Update hour for next entry
-      setTestHour(h => (h + 1) % 24);
-    } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        message: err.message || 'Failed to submit test entry.'
-      });
+      const msg = `Sand test #${res.test_number} saved (${res.status}). SPC rules evaluated.`;
+      setFeedback({ type: 'success', message: msg });
+      showToast(msg, 'success');
+      await refreshAlertsCount();
+      setTestHour(h => (h >= 24 ? 1 : h + 1));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to submit test entry.';
+      setFeedback({ type: 'error', message: msg });
+      showToast(msg, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -129,7 +173,7 @@ export const SandTestEntryPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 rounded text-slate-600 border border-slate-200 flex items-center gap-1.5">
+          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 rounded text-slate-600 border border-slate-200 flex items-center gap-1.5 tabular-nums">
             <Clock className="w-3.5 h-3.5 text-blue-600" />
             Hour {testHour}:00
           </span>
@@ -138,6 +182,7 @@ export const SandTestEntryPage: React.FC = () => {
 
       {feedback && (
         <div
+          role={feedback.type === 'error' ? 'alert' : 'status'}
           className={`p-4 rounded-xl border flex items-start gap-3 ${
             feedback.type === 'success'
               ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
@@ -155,14 +200,16 @@ export const SandTestEntryPage: React.FC = () => {
 
       {/* Main Entry Form */}
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Context Controls Bar */}
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Molding Line</label>
+            <label htmlFor="entry-line" className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+              Molding Line
+            </label>
             <select
+              id="entry-line"
               value={lineCode}
               onChange={e => setLineCode(e.target.value)}
-              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
+              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"
             >
               <option value="D1">Line D1 (Automotive Engine Blocks)</option>
               <option value="D2">Line D2 (Transmission Housings)</option>
@@ -172,11 +219,14 @@ export const SandTestEntryPage: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Shift</label>
+            <label htmlFor="entry-shift" className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+              Shift
+            </label>
             <select
+              id="entry-shift"
               value={shift}
               onChange={e => setShift(Number(e.target.value))}
-              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
+              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"
             >
               <option value={1}>Shift 1 (06:00 - 14:00)</option>
               <option value={2}>Shift 2 (14:00 - 22:00)</option>
@@ -185,100 +235,123 @@ export const SandTestEntryPage: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Test Date</label>
+            <label htmlFor="entry-date" className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+              Test Date
+            </label>
             <input
+              id="entry-date"
               type="date"
+              required
               value={testDate}
               onChange={e => setTestDate(e.target.value)}
-              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
+              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Test Hour (1-24)</label>
+            <label htmlFor="entry-hour" className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+              Test Hour (1–24)
+            </label>
             <input
+              id="entry-hour"
               type="number"
               min={1}
               max={24}
+              required
               value={testHour}
               onChange={e => setTestHour(Number(e.target.value))}
-              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
+              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 tabular-nums"
             />
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Sand Batch / Muller No.</label>
+            <label htmlFor="entry-batch" className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+              Sand Batch / Muller No.
+            </label>
             <input
+              id="entry-batch"
               type="text"
               value={batchNumber}
               onChange={e => setBatchNumber(e.target.value)}
               placeholder="e.g. BAT-D1-01"
-              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
+              className="w-full text-xs font-semibold bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"
             />
           </div>
         </div>
 
         {/* Parameters Input Grid */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-800 tracking-wider uppercase">
               Physical Sand Measurements
             </h2>
-            <span className="text-xs text-slate-500">Values are compared to engineering specifications (LSL & USL)</span>
+            <span className="text-xs text-slate-500">Values are compared to engineering specifications (LSL &amp; USL)</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {parameters.map(param => {
-              const val = values[param.id] || '';
-              const validation = getValidationState(param, val);
+          {loading ? (
+            <div className="py-12 text-center text-xs text-slate-400">Loading active test parameters...</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {parameters.map(param => {
+                const val = values[param.id] || '';
+                const validation = getValidationState(param, val);
+                const inputId = `param-input-${param.id}`;
 
-              return (
-                <div
-                  key={param.id}
-                  className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors space-y-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-slate-800">{param.name}</span>
-                      <div className="text-[10px] text-slate-400 font-mono">{param.code} ({param.unit})</div>
+                return (
+                  <div
+                    key={param.id}
+                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <label htmlFor={inputId} className="cursor-pointer">
+                        <span className="text-xs font-bold text-slate-800 block">{param.name}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {param.code} ({param.unit})
+                        </span>
+                      </label>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${validation.color}`}>
+                        {validation.text}
+                      </span>
                     </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${validation.color || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-                      {validation.text}
-                    </span>
-                  </div>
 
-                  {/* Big Touch-Friendly Number Input */}
-                  <div className="relative">
-                    <input
-                      type="number"
-                      step="any"
-                      value={val}
-                      onChange={e => handleValueChange(param.id, e.target.value)}
-                      required
-                      className="w-full text-lg font-black text-slate-900 bg-white border border-slate-300 rounded-lg px-3 py-2 text-right tracking-tight focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    />
-                    <span className="absolute left-3 top-2.5 text-xs font-semibold text-slate-400 pointer-events-none">
-                      {param.unit}
-                    </span>
-                  </div>
+                    <div className="relative">
+                      <input
+                        id={inputId}
+                        type="number"
+                        step="any"
+                        value={val}
+                        onChange={e => handleValueChange(param.id, e.target.value)}
+                        required
+                        className="w-full text-lg font-black text-slate-900 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-right tracking-tight focus:ring-2 focus:ring-blue-500 focus:outline-none tabular-nums"
+                      />
+                      <span className="absolute left-3 top-3 text-xs font-semibold text-slate-400 pointer-events-none">
+                        {param.unit}
+                      </span>
+                    </div>
 
-                  {/* Target & Limits Guide Bar */}
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium pt-1">
-                    <span>LSL: <b className="text-slate-700">{param.lsl}</b></span>
-                    <span>Target: <b className="text-blue-600">{param.target_value}</b></span>
-                    <span>USL: <b className="text-slate-700">{param.usl}</b></span>
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium pt-1 tabular-nums">
+                      <span>
+                        LSL: <b className="text-slate-700">{param.lsl}</b>
+                      </span>
+                      <span>
+                        Target: <b className="text-blue-600">{param.target_value}</b>
+                      </span>
+                      <span>
+                        USL: <b className="text-slate-700">{param.usl}</b>
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
-          {/* Notes Textarea */}
           <div className="pt-2">
-            <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+            <label htmlFor="entry-notes" className="block text-xs font-bold text-slate-600 uppercase mb-1">
               Shop Floor Notes / Observations
             </label>
             <textarea
+              id="entry-notes"
               rows={2}
               value={notes}
               onChange={e => setNotes(e.target.value)}
@@ -288,16 +361,17 @@ export const SandTestEntryPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex items-center justify-end gap-3">
           <button
             type="button"
             onClick={() => {
               const resetVals: Record<number, string> = {};
-              parameters.forEach(p => resetVals[p.id] = p.target_value.toString());
+              parameters.forEach(p => {
+                resetVals[p.id] = p.target_value.toString();
+              });
               setValues(resetVals);
             }}
-            className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition-colors flex items-center gap-1.5"
+            className="px-4 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition-colors flex items-center gap-1.5"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Reset to Targets
@@ -305,8 +379,8 @@ export const SandTestEntryPage: React.FC = () => {
 
           <button
             type="submit"
-            disabled={submitting}
-            className="px-6 py-2.5 text-xs font-black uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors flex items-center gap-2"
+            disabled={submitting || loading}
+            className="px-6 py-2.5 text-xs font-black uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 rounded-lg shadow-sm transition-colors flex items-center gap-2"
           >
             <Save className="w-4 h-4" />
             {submitting ? 'Submitting Test...' : 'Save & Evaluate SPC'}

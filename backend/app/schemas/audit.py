@@ -1,9 +1,11 @@
-from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel
+from typing import Optional
+from pydantic import BaseModel, ConfigDict
+
 
 class AuditLogResponse(BaseModel):
     id: int
+    sequence_no: Optional[int] = None
     timestamp: datetime
     user_name: str
     user_role: str
@@ -14,6 +16,8 @@ class AuditLogResponse(BaseModel):
     new_value: Optional[str] = None
     reason: Optional[str] = None
     ip_address: Optional[str] = None
+    outcome: str = "SUCCESS"
+    prev_hash: Optional[str] = None
+    record_hash: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
